@@ -15,6 +15,7 @@ library(ggplot2)   # For plotting
 library(plotrix)   # For std.error
 library(gridExtra) # For grid.arrange
 library(colorspace) # For darken() function
+library(GGally)    # For correlation matrix plots (ggpairs)
 
 
 # ============================================================================
@@ -22,7 +23,7 @@ library(colorspace) # For darken() function
 # ============================================================================
 
 # USER TOGGLE 1: Analysis type - "texture" or "fractal"
-analysis_type <- "fractal"
+analysis_type <- "texture"
 
 # USER TOGGLE 2: Input files (pre-decoded from 260114_ASM_texture_data_decoding.r)
 input_file_texture <- "20250910_ASM_1_10_texture_data_DECODED.csv"
@@ -30,7 +31,10 @@ input_file_fractal <- "20251218_ASM_1_10_fractal_data_DECODED.csv"
 
 # USER TOGGLE 3: Outlier removal - TRUE or FALSE
 remove_outliers <- TRUE
-outliers_file_name <- "20260108_ASM_outliers.csv"
+outliers_file_name <- "20260325_ASM_exp3ANDoutliers.csv"
+
+# USER TOGGLE 4: Create correlation matrix plots - TRUE or FALSE
+create_correlation_plots <- FALSE
 
 # ============================================================================
 # DERIVED CONFIGURATION (based on toggles above)
@@ -43,9 +47,10 @@ if (analysis_type == "texture") {
   input_file <- input_file_fractal
 }
 
-# Create file prefix from input filename (extract date portion)
-# e.g., "20250910_ASM_1_10_texture_data_DECODED.csv" -> "20250910"
-input_prefix <- sub("_.*", "", basename(input_file))
+# Use today's date as prefix for all output files and folders
+date <- Sys.Date()
+date2 <- gsub("-| |UTC", "", date)
+input_prefix <- date2
 
 # Create outlier suffix (only used if remove_outliers is TRUE)
 # e.g., "20260108_ASM_outliers.csv" -> "20260108_ASM_outliers"
@@ -63,7 +68,7 @@ if (analysis_type == "texture") {
 
   # Four focal parameters for detailed post-hoc and plotting
 
-  analysis_vars <- c("cluster_shade", "entropy", "maximum_probability", "kappa")
+  analysis_vars <- c(    "cluster_shade", "entropy", "maximum_probability", "diagonal_moment", "evaporation_duration")
 
   # All 15 texture parameters for comprehensive Excel ANOVA summary
   all_params <- c(
@@ -71,7 +76,7 @@ if (analysis_type == "texture") {
     "diagonal_moment", "difference_energy", "difference_entropy",
     "energy", "entropy", "inertia", "inverse_different_moment",
     "kappa", "maximum_probability", "sum_energy",
-    "sum_entropy", "sum_variance"
+    "sum_entropy", "sum_variance", "evaporation_duration"
   )
 
   # Texture values are very small, scale for numerical stability
@@ -120,10 +125,6 @@ cat(sprintf("Output prefix: %s\n", output_prefix))
 cat(sprintf("Parameters to analyze: %s\n", paste(analysis_vars, collapse = ", ")))
 cat(sprintf("Total parameters for ANOVA: %d\n\n", length(all_params)))
 
-
-# Determine export date and create output folder
-date <- Sys.Date()
-date2 <- gsub("-| |UTC", "", date)
 
 # Create output folder based on analysis type and outlier settings
 # Format: {input_prefix}_ASM_{TA/FA}_stats[_excl_{outliers_suffix}]
@@ -1122,10 +1123,188 @@ if (length(existing_vars) == 0) {
     width = 30,
     height = actual_height,
     dpi = 300,
-    units = "cm"
+    units = "cm",
+    limitsize = FALSE
   )
 
   cat(sprintf("Plot saved as: %s\n", output_filename_plot))
+}
+
+
+# ============================================================================
+# CORRELATION MATRIX PLOTS
+# ============================================================================
+# Create five ggpairs correlation matrices (ALL / AS / JZ / SNC / Verum)
+# showing pairwise relationships between all parameters + evaporation_duration.
+#
+# Plot structure:
+#   - Upper triangle: Pearson correlation coefficients with green color gradient
+#   - Lower triangle: Scatterplots of individual observations
+#   - Diagonal: Parameter names
+#
+# Adapted from ASPS analysis script (git_ANOVA_ASPS_fractal_and_texture.r)
+
+if (create_correlation_plots) {
+
+  cat("\n")
+  cat("################################################################################\n")
+  cat("CREATING CORRELATION MATRIX PLOTS\n")
+  cat("################################################################################\n\n")
+
+  # --- Parameter order for correlation matrix display ---
+  # Custom order groups conceptually related parameters together
+  if (analysis_type == "texture") {
+    corr_param_order <- c(
+      "cluster_shade",             # Cluster-based features
+      "diagonal_moment",
+      "maximum_probability",       # Probability-based features
+      "sum_energy",
+      "cluster_prominence",        # Additional cluster feature
+      "entropy",                   # Entropy features
+      "kappa",
+      "energy",                    # Energy features
+      "correlation",
+      "difference_energy",
+      "difference_entropy",        # Difference features
+      "inertia",                   # Moment-based features
+      "inverse_different_moment",
+      "sum_entropy",               # Sum features
+      "sum_variance",
+      "evaporation_duration"       # Evaporation duration
+    )
+    corr_plot_size <- 40  # cm — large for 16x16 grid
+  } else {
+    corr_param_order <- c(
+      "db_mean", "dm_mean", "dx_mean",
+      "evaporation_duration"
+    )
+    corr_plot_size <- 20  # cm — smaller for 4x4 grid
+  }
+
+  cat(sprintf("Parameters for correlation matrix (%d total):\n", length(corr_param_order)))
+  cat(paste(corr_param_order, collapse = ", "), "\n\n")
+
+
+  # --- Helper functions for ggpairs panels ---
+
+  # upper_cor: Pearson r with green color gradient (light = weak, dark = strong)
+  upper_cor <- function(data, mapping, ...) {
+    x <- eval_data_col(data, mapping$x)
+    y <- eval_data_col(data, mapping$y)
+    cor_val <- cor(x, y, use = "complete.obs")
+
+    # Green gradient: light green (#90EE90) to dark green (#006400)
+    abs_cor <- abs(cor_val)
+    red_component   <- round(144 * (1 - abs_cor))
+    green_component <- round(238 - 138 * abs_cor)
+    blue_component  <- round(144 * (1 - abs_cor))
+    color_hex <- sprintf("#%02X%02X%02X", red_component, green_component, blue_component)
+
+    ggplot(data, mapping) +
+      annotate("text", x = 0.5, y = 0.5,
+               label = sprintf("%.2f", cor_val),
+               color = color_hex, size = 6) +
+      xlim(0, 1) + ylim(0, 1) +
+      theme_void()
+  }
+
+  # lower_scatter: Scatterplots colored by experimenter (AS = blue, JZ = red)
+  lower_scatter <- function(data, mapping, ...) {
+    ggplot(data, mapping) +
+      geom_point(aes(color = experiment_name), alpha = 0.2, size = 0.5) +
+      scale_color_manual(values = c("ASM_AS" = "blue", "ASM_JZ" = "red"),
+                         guide = "none") +
+      theme_minimal() +
+      theme(
+        panel.grid = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()
+      )
+  }
+
+  # diag_label: Parameter name on diagonal (underscores replaced with newlines)
+  diag_label <- function(data, mapping, ...) {
+    var_name <- as.character(mapping$x)[2]
+    display_name <- gsub("_", "\n", var_name)
+
+    ggplot(data, mapping) +
+      annotate("text", x = 0.5, y = 0.5,
+               label = display_name,
+               size = 2.5, fontface = "bold", lineheight = 0.8) +
+      xlim(0, 1) + ylim(0, 1) +
+      theme_void()
+  }
+
+
+  # --- Create correlation output subfolder ---
+  corr_folder <- file.path(output_folder, "correlation_matrices")
+  if (!dir.exists(corr_folder)) {
+    dir.create(corr_folder, recursive = TRUE)
+    cat(sprintf("Created subfolder: %s\n", corr_folder))
+  }
+
+
+  # --- Define data subsets for the 5 correlation plots ---
+  corr_subsets <- list(
+    list(name = "ALL",   label = "All Data",    filter_expr = rep(TRUE, nrow(df2))),
+    list(name = "AS",    label = "AS Only",      filter_expr = df2$experiment_name == "ASM_AS"),
+    list(name = "JZ",    label = "JZ Only",      filter_expr = df2$experiment_name == "ASM_JZ"),
+    list(name = "SNC",   label = "SNC Only (JZ)", filter_expr = df2$verum == 0 & df2$experiment_name == "ASM_JZ"),
+    list(name = "Verum", label = "Verum Only (JZ)", filter_expr = df2$verum == 1 & df2$experiment_name == "ASM_JZ")
+  )
+
+
+  # --- Generate and save each correlation plot ---
+  for (subset_info in corr_subsets) {
+
+    subset_data <- df2[subset_info$filter_expr, ]
+
+    # Print experiment numbers for verification
+    exp_nums <- sort(unique(as.numeric(as.character(subset_data$experiment_number))))
+    cat(sprintf("\nCorrelation plot %s: experiments %s (n = %d observations)\n",
+                subset_info$name,
+                paste(exp_nums, collapse = ", "),
+                nrow(subset_data)))
+
+    # Select correlation parameters + experiment_name (for scatter coloring)
+    df_ordered <- subset_data[, c(corr_param_order, "experiment_name")]
+
+    # Build the ggpairs correlation matrix (columns arg excludes experiment_name)
+    corr_plot <- ggpairs(
+      df_ordered,
+      columns = seq_along(corr_param_order),
+      upper = list(continuous = upper_cor),
+      lower = list(continuous = lower_scatter),
+      diag  = list(continuous = diag_label)
+    ) +
+      theme(
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+        strip.text = element_blank(),
+        panel.spacing = unit(0.1, "lines")
+      ) +
+      labs(title = sprintf("Correlation Matrix: %s (%s Parameters)",
+                           subset_info$label, tools::toTitleCase(analysis_type)))
+
+    # Save to subfolder
+    output_file_corr <- file.path(
+      corr_folder,
+      paste0(date2, "_", analysis_type, "_correlation_", subset_info$name,
+             outlier_file_suffix, ".png")
+    )
+
+    ggsave(filename = output_file_corr,
+           plot = corr_plot,
+           width = corr_plot_size, height = corr_plot_size,
+           dpi = 300, units = "cm")
+
+    cat(sprintf("  Saved: %s\n", basename(output_file_corr)))
+  }
+
+  cat("\nCorrelation matrix plots completed successfully\n")
+  cat("================================================================================\n\n")
+
+} else {
+  cat("\nCorrelation matrix plots: SKIPPED (create_correlation_plots = FALSE)\n\n")
 }
 
 
@@ -1144,5 +1323,8 @@ cat(sprintf("  1. ANOVA summary: %s\n", output_filename_anova))
 cat(sprintf("  2. Post-hoc & Cohen's d: %s\n", output_filename_posthoc))
 if (exists("output_filename_plot")) {
   cat(sprintf("  3. Parameter plots: %s\n", output_filename_plot))
+}
+if (create_correlation_plots) {
+  cat(sprintf("  4. Correlation matrices: %s/\n", corr_folder))
 }
 cat("\nDone!\n")
