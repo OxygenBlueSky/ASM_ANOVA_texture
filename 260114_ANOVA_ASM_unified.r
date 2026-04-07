@@ -4,7 +4,8 @@
 # Toggle between analysis types using the configuration section below
 # Run 260114_ASM_TA_FA_data_decoding.r first to have decoded files
 
-# Load required packages -------
+#===== Load required packages =================================================
+
 library(openxlsx)  # For Excel file handling
 library(readxl)    # For reading Excel files
 library(car)       # For Type III ANOVA (Anova function)
@@ -18,9 +19,7 @@ library(colorspace) # For darken() function
 library(GGally)    # For correlation matrix plots (ggpairs)
 
 
-# ============================================================================
-# CONFIGURATION - USER TOGGLES
-# ============================================================================
+#===== CONFIGURATION - USER TOGGLES ==========================================
 
 # USER TOGGLE 1: Analysis type - "texture" or "fractal"
 analysis_type <- "texture"
@@ -36,9 +35,7 @@ outliers_file_name <- "20260325_ASM_exp3ANDoutliers.csv"
 # USER TOGGLE 4: Create correlation matrix plots - TRUE or FALSE
 create_correlation_plots <- FALSE
 
-# ============================================================================
-# DERIVED CONFIGURATION (based on toggles above)
-# ============================================================================
+#===== DERIVED CONFIGURATION (based on toggles above) ========================
 
 # Select input file based on analysis type
 if (analysis_type == "texture") {
@@ -151,9 +148,7 @@ if (!dir.exists(output_folder)) {
 }
 
 
-# ============================================================================
-# DATA LOADING
-# ============================================================================
+#===== DATA LOADING ===========================================================
 
 cat("========================================================================\n")
 cat("LOADING PRE-DECODED DATA\n")
@@ -185,9 +180,7 @@ if (analysis_type == "fractal") {
   colnames(df2)[26] <- "dx_mean"  # Column 26: D̅ for D͞ᵪ (best r²)
 }
 
-# ============================================================================
-# OUTLIER REMOVAL
-# ============================================================================
+#===== OUTLIER REMOVAL ========================================================
 
 cat("\n")
 cat("========================================================================\n")
@@ -248,9 +241,7 @@ cat("========================================================================\n\
 data_source_note <- sprintf("Input: %s | %s", basename(input_file), outlier_note)
 
 
-# ============================================================================
-# PREP FOR ANOVA
-# ============================================================================
+#===== PREP FOR ANOVA =========================================================
 
 cat("========================================================================\n")
 cat("PREPARING DATA FOR ANOVA\n")
@@ -307,9 +298,7 @@ cat("\n")
 cat("========================================================================\n\n")
 
 
-# ============================================================================
-# ANOVA HELPER FUNCTION
-# ============================================================================
+#===== ANOVA HELPER FUNCTION ==================================================
 
 # Function to run ANOVA and extract p-values
 run_anova_summary <- function(data_subset, param_name) {
@@ -371,9 +360,7 @@ run_anova_summary <- function(data_subset, param_name) {
 }
 
 
-# ============================================================================
-# ANOVA SUMMARY FOR ALL PARAMETERS
-# ============================================================================
+#===== ANOVA SUMMARY FOR ALL PARAMETERS =======================================
 
 cat("========================================================================\n")
 cat("CREATING ANOVA SUMMARY FOR ALL PARAMETERS\n")
@@ -521,9 +508,7 @@ cat(sprintf("ANOVA summary exported to: %s\n", output_filename_anova))
 cat("========================================================================\n\n")
 
 
-# ============================================================================
-# POST-HOC TESTS WITH COHEN'S D
-# ============================================================================
+#===== POST-HOC TESTS WITH COHEN'S D ==========================================
 
 cat("========================================================================\n")
 cat("POST-HOC TESTS WITH COHEN'S D\n")
@@ -539,7 +524,12 @@ compute_emmeans_contrasts <- function(data_subset, variable) {
   cat(sprintf("  Solutions in this analysis: %s\n", paste(solutions, collapse = ", ")))
   cat(sprintf("  Number of experiments: %d\n", n_experiments))
 
-  # Initialize result matrices
+  # Initialize n×n pairwise comparison matrices (only lower triangle will be filled;
+  # upper triangle stays NA to avoid redundancy, since A-vs-B = B-vs-A).
+  #   potency_matrix:     unadjusted p-values for main-effect pairwise contrasts
+  #   interaction_matrix:  p-values testing whether each pairwise difference is
+  #                        consistent across experiments (per-pair interaction)
+  #   cohens_d_matrix:     standardized effect sizes for each pairwise comparison
   potency_matrix <- matrix(NA, nrow = n_solutions, ncol = n_solutions,
                            dimnames = list(solutions, solutions))
   interaction_matrix <- matrix(NA, nrow = n_solutions, ncol = n_solutions,
@@ -557,12 +547,23 @@ compute_emmeans_contrasts <- function(data_subset, variable) {
   # Fit ANOVA model
   model <- aov(as.formula(formula_str), data = data_subset)
 
-  # Compute main effect pairwise comparisons
+  # --- Main-effect pairwise comparisons ---
+  # Statistical goal: estimate the mean difference between every pair of
+  # decoded_solution levels, averaging over experiments. P-values are
+  # unadjusted (no Bonferroni/Tukey) because we report them alongside
+  # Cohen's d — the effect size is more informative than corrected p-values
+  # when the number of comparisons is modest.
+  #
+  # emmeans averages over the experiment factor, giving one estimated
+  # marginal mean per solution level; pairs() computes all pairwise
+  # differences and their t-tests.
   emm_solution <- emmeans(model, ~ decoded_solution)
   pairs_solution <- pairs(emm_solution, adjust = "none")
   pairs_summary <- summary(pairs_solution)
 
-  # Fill potency matrix with p-values
+  # Parse each contrast name (e.g., "water_1 - water_2") into its two solution
+  # names, then place the p-value into the lower triangle of potency_matrix
+  # at [row, col] where row > col (ensures consistent lower-triangle layout).
   for (i in 1:nrow(pairs_summary)) {
     contrast_name <- as.character(pairs_summary$contrast[i])
     parts <- strsplit(contrast_name, " - ")[[1]]
@@ -581,7 +582,12 @@ compute_emmeans_contrasts <- function(data_subset, variable) {
     }
   }
 
-  # Cohen's d calculation
+  # --- Cohen's d = mean difference / residual SD ---
+  # Statistical goal: quantify pairwise effect sizes on a standardized scale
+  # so they are comparable across parameters with different units/ranges.
+  # We use the ANOVA model's residual SD (pooled within-group SD) as the
+  # denominator — this is the standard choice for balanced/near-balanced
+  # designs and gives the same denominator for all pairs within a model.
   residual_sd <- sigma(model)
 
   for (i in 1:nrow(pairs_summary)) {
@@ -603,7 +609,28 @@ compute_emmeans_contrasts <- function(data_subset, variable) {
     }
   }
 
-  # Interaction contrasts (only if multiple experiments)
+  # --- Interaction contrasts (only if multiple experiments) ---
+  # Statistical goal: test whether each pairwise solution difference is
+  # consistent across experiments, or whether the treatment effect depends
+  # on which experiment we look at (a per-pair solution x experiment
+  # interaction). A significant result means the difference between those
+  # two solutions is not stable across experiments — i.e., the effect
+  # does not replicate.
+  #
+  # Method: For each pair of solutions (e.g., water_1 vs water_2):
+  #   1. Compute per-experiment contrasts via emmeans (emm_by_exp gives
+  #      one estimated mean per solution per experiment; pairs() gives
+  #      the difference within each experiment separately).
+  #   2. Find the rows in pairs_by_exp matching this specific contrast
+  #      name — one row per experiment.
+  #   3. Apply pairs() again on those per-experiment contrasts to get
+  #      differences-of-differences (how much the contrast changes
+  #      between experiments).
+  #   4. Run a joint F-test via test(joint = TRUE) to get a single
+  #      omnibus p-value for whether those differences-of-differences
+  #      are collectively zero.
+  # The p-values fill the lower triangle of interaction_matrix
+  # (same indexing convention as potency_matrix).
   if (n_experiments > 1) {
     tryCatch({
       emm_by_exp <- emmeans(model, ~ decoded_solution | experiment_number)
@@ -752,7 +779,10 @@ for (scenario in scenarios_posthoc) {
 
     current_row <- current_row + 1
 
-    # Data rows
+    # Write p-values into the lower triangle of the n×n solution comparison
+    # matrix. Each cell holds one pairwise contrast; upper triangle is left
+    # empty to avoid redundancy. Each solution gets two columns: "solution"
+    # (main-effect p) and "interaction" (per-pair experiment interaction p).
     for (i in 1:n_solutions) {
       writeData(wb_posthoc, scenario$short_name, solutions[i],
                 startRow = current_row, startCol = 1)
@@ -889,7 +919,8 @@ for (scenario in scenarios_posthoc) {
 
     current_row <- current_row + 1
 
-    # Data rows
+    # Write Cohen's d values into lower triangle of the comparison matrix
+    # (same layout as the p-value matrix above, one column per solution).
     for (i in 1:n_solutions) {
       writeData(wb_posthoc, sheet_name_d, solutions[i],
                 startRow = current_row, startCol = 1)
@@ -943,9 +974,7 @@ cat(sprintf("Post hoc tests exported to: %s\n", output_filename_posthoc))
 cat("========================================================================\n\n")
 
 
-# ============================================================================
-# PLOTTING
-# ============================================================================
+#===== PLOTTING ===============================================================
 
 cat("========================================================================\n")
 cat("CREATING PLOTS\n")
@@ -1022,7 +1051,8 @@ if (length(existing_vars) == 0) {
     y_limits[[var]] <- c(y_min - 0.05 * y_range, y_max + 0.05 * y_range)
   }
 
-  # Define color palette
+  # Color palette: 3 base colors (one per solution), darkened variant for pair 2,
+  # so replicates of the same solution are visually linked but distinguishable.
   dark2_colors <- RColorBrewer::brewer.pal(8, "Dark2")
   base_colors <- dark2_colors[4:6]
   darkened_colors <- darken(base_colors, amount = 0.3)
@@ -1131,9 +1161,8 @@ if (length(existing_vars) == 0) {
 }
 
 
-# ============================================================================
-# CORRELATION MATRIX PLOTS
-# ============================================================================
+#===== CORRELATION MATRIX PLOTS ================================================
+
 # Create five ggpairs correlation matrices (ALL / AS / JZ / SNC / Verum)
 # showing pairwise relationships between all parameters + evaporation_duration.
 #
@@ -1308,9 +1337,7 @@ if (create_correlation_plots) {
 }
 
 
-# ============================================================================
-# FINAL SUMMARY
-# ============================================================================
+#===== FINAL SUMMARY ==========================================================
 
 cat("\n")
 cat("################################################################################\n")

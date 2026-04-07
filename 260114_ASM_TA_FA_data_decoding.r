@@ -3,30 +3,28 @@
 # Purpose: Decode ASM texture and fractal data and export with decoding information
 # Based on: 260109_ANOVA_ASM_posthoc_cohensd.r
 
-# Load required packages -------
+#===== Load required packages =================================================
+
 library(readxl)    # For reading Excel files (if needed)
 library(here)      # For file path management
 library(dplyr)     # For data manipulation
 
 
-# ============================================================================
-# PART 1: TEXTURE ANALYSIS DATA
-# ============================================================================
+#===== PART 1: TEXTURE ANALYSIS DATA ==========================================
 
 cat("\n")
 cat("################################################################################\n")
 cat("TEXTURE ANALYSIS DATA PROCESSING\n")
 cat("################################################################################\n\n")
 
-# Data files with Texture data from ACIA --------
+# Load raw texture data exported from ACIA image analysis software
 
 df <- read.delim(here("20250910_ASM_1_10_texture_data.csv"))
 
 
-# Hard coding on ASM data
-# Filter df for scale and separate out experiment number and potency codes
-# AS and JZ named the series differently
-# Using column "substance_group" for name extraction and "series_name" for experiment number
+# Filter to scale=1 and parse experiment/potency metadata from column names.
+# AS (experiments 1-2) and JZ (experiments 3-10) used different naming
+# conventions in "substance_group", so the parser handles both formats.
 
 # Filter to keep only scale = 1 data
 # The square brackets [rows, columns] allow us to subset the dataframe
@@ -384,16 +382,14 @@ cat("  - pair (1 or 2)\n")
 cat("========================================================================\n\n")
 
 
-# ============================================================================
-# PART 2: FRACTAL ANALYSIS DATA
-# ============================================================================
+#===== PART 2: FRACTAL ANALYSIS DATA ==========================================
 
 cat("\n")
 cat("################################################################################\n")
 cat("FRACTAL ANALYSIS DATA PROCESSING\n")
 cat("################################################################################\n\n")
 
-# Load Fractal data from FracLac analysis --------
+# Load raw fractal data exported from FracLac (ImageJ plugin)
 
 df_FA <- read.delim(here("20251218_ASM_1_10_fractal_data.csv"))
 
@@ -601,9 +597,7 @@ cat("  - decoded_solution, pair\n")
 cat("========================================================================\n\n")
 
 
-# ============================================================================
-# FINAL SUMMARY
-# ============================================================================
+#===== FINAL SUMMARY ==========================================================
 
 cat("\n")
 cat("################################################################################\n")
