@@ -11,7 +11,7 @@ This is an R-based statistical analysis project for ASM (Arnica Stability Method
 - Each experiment tests 6 coded solutions (A-F): 3 different solutions × 2 pairs each
 - Each solution has 7 replicates (crystallization plates)
 - SNC experiments: 3 water preparations (water_1, water_2, water_3)
-- Verum experiments: 3 homeopathic potencies (potency_x, potency_y, potency_z)
+- Verum experiments: 3 homeopathic solutions (Lactose, Stannum, Silicea)
 
 ## Core Workflow
 
@@ -33,7 +33,7 @@ The analysis follows a two-script workflow:
 
 **What it does:**
 - Parses experiment names and potency codes from raw data
-- Applies decoding tables to map coded letters (A-F) to solutions (water_1/2/3 or potency_x/y/z) and pairs (1/2)
+- Applies decoding tables to map coded letters (A-F) to solutions (water_1/2/3 or Lactose/Stannum/Silicea) and pairs (1/2)
 - Adds metadata columns: `experiment_name`, `experiment_number`, `verum`, `SNC`, `sub_exp_number`, `decoded_solution`, `pair`
 - For fractal data: parses filenames and joins with texture decoding info via `series_name` and `nr_in_chamber`
 

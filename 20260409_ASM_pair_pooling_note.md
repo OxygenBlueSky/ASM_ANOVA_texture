@@ -8,7 +8,7 @@
 
 ## The situation
 
-In the ASM experiment, each of the 3 solutions (water_1/2/3 for SNC, potency_x/y/z for Verum) is produced in duplicate — two independently prepared bottles from the same source (28X). These are labelled as **pair 1** and **pair 2**. Each pair contributes 7 crystallization plates per experiment, giving 14 plates per solution per experiment.
+In the ASM experiment, each of the 3 solutions (water_1/2/3 for SNC, Lactose/Stannum/Silicea for Verum) is produced in duplicate — two independently prepared bottles from the same source (28X). These are labelled as **pair 1** and **pair 2**. Each pair contributes 7 crystallization plates per experiment, giving 14 plates per solution per experiment.
 
 The current ANOVA model is:
 

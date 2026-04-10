@@ -146,7 +146,7 @@ df_TA <- df_TA %>%
 # - 3 different solutions (3 potencies or 3 SNCs) are tested, each produced in duplicate (pairs)
 #
 # SNC experiments: 3 water preparations (water_1, water_2, water_3) each produced twice
-# Verum experiments: 3 homeopathic solutions (potency_x, potency_y, potency_z) each produced twice
+# Verum experiments: 3 homeopathic solutions (Lactose, Stannum, Silicea) each produced twice
 #
 # The decoding tables below map: experiment_number + coded solution (A-F) → solution + pair (1 or 2)
 
@@ -223,19 +223,19 @@ cat("-----------|-----------------|------------------|-----\n")
 
 # Create Verum mapping table
 # Same structure as SNC mapping, but for treatment experiments
-# potency_x, potency_y, potency_z will later be decoded to silicea, lactose, stannum
+# Verum solutions: Lactose, Stannum, Silicea (mapped from the original blind codes)
 verum_mapping <- data.frame(
   # List all experiment numbers (each appears 6 times, once for each coded solution A-F)
   experiment_number = c(
-    # Day 2: A+D (potency_x), B+E (potency_y), C+F (potency_z)
+    # Day 2: A+D (Lactose), B+E (Stannum), C+F (Silicea)
     2, 2, 2, 2, 2, 2,
-    # Day 4: F+A (potency_x), D+B (potency_y), E+C (potency_z)
+    # Day 4: F+A (Lactose), D+B (Stannum), E+C (Silicea)
     4, 4, 4, 4, 4, 4,
-    # Day 5: C+F (potency_x), A+E (potency_y), B+D (potency_z)
+    # Day 5: C+F (Lactose), A+E (Stannum), B+D (Silicea)
     5, 5, 5, 5, 5, 5,
-    # Day 7: E+C (potency_x), F+A (potency_y), D+B (potency_z)
+    # Day 7: E+C (Lactose), F+A (Stannum), D+B (Silicea)
     7, 7, 7, 7, 7, 7,
-    # Day 10: A+E (potency_x), C+F (potency_y), B+D (potency_z)
+    # Day 10: A+E (Lactose), C+F (Stannum), B+D (Silicea)
     10, 10, 10, 10, 10, 10
   ),
   # List the coded solution letters
@@ -248,11 +248,11 @@ verum_mapping <- data.frame(
   ),
   # Assign decoded solution names
   decoded_solution = c(
-    "potency_x", "potency_x", "potency_y", "potency_y", "potency_z", "potency_z",
-    "potency_x", "potency_x", "potency_y", "potency_y", "potency_z", "potency_z",
-    "potency_x", "potency_x", "potency_y", "potency_y", "potency_z", "potency_z",
-    "potency_x", "potency_x", "potency_y", "potency_y", "potency_z", "potency_z",
-    "potency_x", "potency_x", "potency_y", "potency_y", "potency_z", "potency_z"
+    "Lactose", "Lactose", "Stannum", "Stannum", "Silicea", "Silicea",
+    "Lactose", "Lactose", "Stannum", "Stannum", "Silicea", "Silicea",
+    "Lactose", "Lactose", "Stannum", "Stannum", "Silicea", "Silicea",
+    "Lactose", "Lactose", "Stannum", "Stannum", "Silicea", "Silicea",
+    "Lactose", "Lactose", "Stannum", "Stannum", "Silicea", "Silicea"
   ),
   # Assign pair numbers
   pair = c(
@@ -270,7 +270,7 @@ for (exp in unique(verum_mapping$experiment_number)) {
   # Filter to get rows for this experiment only
   exp_data <- verum_mapping[verum_mapping$experiment_number == exp, ]
   # Loop through each solution type
-  for (sol in c("potency_x", "potency_y", "potency_z")) {
+  for (sol in c("Lactose", "Stannum", "Silicea")) {
     # Filter to get rows for this solution only
     sol_data <- exp_data[exp_data$decoded_solution == sol, ]
     # Combine the coded solution letters with a + sign
@@ -341,7 +341,7 @@ cat("\n")
 # Check counts by experiment_number and decoded_solution
 # This table shows which solutions were tested in each experiment
 # SNC experiments (1,3,6,8,9) should only have water_1, water_2, water_3
-# Verum experiments (2,4,5,7,10) should only have potency_x, potency_y, potency_z
+# Verum experiments (2,4,5,7,10) should only have Lactose, Stannum, Silicea
 cat("--- Observations per experiment_number × decoded_solution ---\n")
 exp_sol_counts <- table(df_TA$experiment_number, df_TA$decoded_solution)
 print(exp_sol_counts)
@@ -377,7 +377,7 @@ cat("  - potency (A-F coded letters)\n")
 cat("  - verum (0 or 1)\n")
 cat("  - SNC (0 or 1)\n")
 cat("  - sub_exp_number (1-5)\n")
-cat("  - decoded_solution (water_1/2/3 or potency_x/y/z)\n")
+cat("  - decoded_solution (water_1/2/3 or Lactose/Stannum/Silicea)\n")
 cat("  - pair (1 or 2)\n")
 cat("========================================================================\n\n")
 

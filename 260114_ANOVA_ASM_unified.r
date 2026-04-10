@@ -998,28 +998,16 @@ condition_labels <- c("SNC (Water Controls)", "Verum (Treatment)")
 # Create solution-pair combination variable
 df2 <- df2 %>%
   mutate(
-    solution_pair = case_when(
-      decoded_solution == "water_1" & pair == 1 ~ "W1-1",
-      decoded_solution == "water_1" & pair == 2 ~ "W1-2",
-      decoded_solution == "water_2" & pair == 1 ~ "W2-1",
-      decoded_solution == "water_2" & pair == 2 ~ "W2-2",
-      decoded_solution == "water_3" & pair == 1 ~ "W3-1",
-      decoded_solution == "water_3" & pair == 2 ~ "W3-2",
-      decoded_solution == "potency_x" & pair == 1 ~ "X1",
-      decoded_solution == "potency_x" & pair == 2 ~ "X2",
-      decoded_solution == "potency_y" & pair == 1 ~ "Y1",
-      decoded_solution == "potency_y" & pair == 2 ~ "Y2",
-      decoded_solution == "potency_z" & pair == 1 ~ "Z1",
-      decoded_solution == "potency_z" & pair == 2 ~ "Z2",
-      TRUE ~ NA_character_
-    ),
+    # Self-describing label of the form "<solution>-<pair>" so that future
+    # solution renames flow through automatically (e.g. water_1-1, Lactose-2)
+    solution_pair = paste0(decoded_solution, "-", pair),
     base_solution = case_when(
       decoded_solution == "water_1" ~ "sol1",
       decoded_solution == "water_2" ~ "sol2",
       decoded_solution == "water_3" ~ "sol3",
-      decoded_solution == "potency_x" ~ "sol1",
-      decoded_solution == "potency_y" ~ "sol2",
-      decoded_solution == "potency_z" ~ "sol3",
+      decoded_solution == "Lactose" ~ "sol1",
+      decoded_solution == "Stannum" ~ "sol2",
+      decoded_solution == "Silicea" ~ "sol3",
       TRUE ~ NA_character_
     )
   )
@@ -1068,16 +1056,24 @@ if (length(existing_vars) == 0) {
   base_colors <- dark2_colors[4:6]
   darkened_colors <- darken(base_colors, amount = 0.3)
 
+  # Keys must match the solution_pair strings built via paste0(decoded_solution, "-", pair)
+  # Pair 1 gets the base color, pair 2 gets the darkened variant of the same hue,
+  # so the two replicates of each solution stay visually linked but distinguishable.
   color_mapping_snc <- c(
-    "W1-1" = base_colors[1], "W1-2" = darkened_colors[1],
-    "W2-1" = base_colors[2], "W2-2" = darkened_colors[2],
-    "W3-1" = base_colors[3], "W3-2" = darkened_colors[3]
+    "water_1-1" = base_colors[1], "water_1-2" = darkened_colors[1],
+    "water_2-1" = base_colors[2], "water_2-2" = darkened_colors[2],
+    "water_3-1" = base_colors[3], "water_3-2" = darkened_colors[3]
   )
 
+  # Slot order must match color_mapping_verum_pooled (Lactose, Stannum, Silicea)
+  # so that each substance keeps the same hue across the pair-level, pooled,
+  # normalized and scatter plots. ggplot will still sort the legend entries
+  # alphabetically (Lactose, Silicea, Stannum) — that's a display-order issue,
+  # not a color-assignment issue; the hue stays glued to the substance.
   color_mapping_verum <- c(
-    "X1" = base_colors[1], "X2" = darkened_colors[1],
-    "Y1" = base_colors[2], "Y2" = darkened_colors[2],
-    "Z1" = base_colors[3], "Z2" = darkened_colors[3]
+    "Lactose-1" = base_colors[1], "Lactose-2" = darkened_colors[1],
+    "Stannum-1" = base_colors[2], "Stannum-2" = darkened_colors[2],
+    "Silicea-1" = base_colors[3], "Silicea-2" = darkened_colors[3]
   )
 
   # Create plots
@@ -1133,7 +1129,11 @@ if (length(existing_vars) == 0) {
           axis.text = element_text(size = 9),
           legend.title = element_text(size = 9),
           legend.text = element_text(size = 8),
-          plot.caption = element_text(size = 8, hjust = 0)
+          plot.caption = element_text(size = 8, hjust = 0),
+          # Lock panel shape (height/width) so widening the figure to fit the
+          # 12-entry legend doesn't also stretch the data area. 0.58 ≈ a ~20%
+          # horizontal squeeze relative to the unlocked 19x8.75 cm grid cell.
+          aspect.ratio = 0.58
         )
 
       plot_list[[plot_counter]] <- p
@@ -1161,7 +1161,8 @@ if (length(existing_vars) == 0) {
   ggsave(
     filename = output_filename_plot,
     plot = grid_plot,
-    width = 30,
+    width = 30,  # aspect.ratio in the theme locks panel shape, so the legend
+                 # fits inside the leftover cell width without needing a wider figure
     height = actual_height,
     dpi = 300,
     units = "cm",
@@ -1194,9 +1195,9 @@ if (length(existing_vars) == 0) {
     "water_3" = base_colors[3]
   )
   color_mapping_verum_pooled <- c(
-    "potency_x" = base_colors[1],
-    "potency_y" = base_colors[2],
-    "potency_z" = base_colors[3]
+    "Lactose" = base_colors[1],
+    "Stannum" = base_colors[2],
+    "Silicea" = base_colors[3]
   )
 
   # Y-axis limits for pooled plot (same approach as original)
@@ -1284,7 +1285,7 @@ if (length(existing_vars) == 0) {
   #----- PLOT 3: Normalized to reference solution (% of reference mean) --------
 
   cat("\n--- Creating normalized plot (% relative to reference) ---\n")
-  cat("  Reference solutions: potency_x (verum), water_1 (SNC)\n")
+  cat("  Reference solutions: Lactose (verum), water_1 (SNC)\n")
 
   # Normalize each parameter to the reference solution's mean within each
   # (verum, sub_exp_number) combination. SE is scaled by the same factor so
@@ -1295,9 +1296,9 @@ if (length(existing_vars) == 0) {
     mean_col <- paste0(var, "_mean")
     se_col <- paste0(var, "_se")
 
-    # Extract reference means: potency_x for verum, water_1 for SNC
+    # Extract reference means: Lactose for verum, water_1 for SNC
     ref_means <- summary_pooled %>%
-      filter((verum == 1 & decoded_solution == "potency_x") |
+      filter((verum == 1 & decoded_solution == "Lactose") |
              (verum == 0 & decoded_solution == "water_1")) %>%
       select(verum, sub_exp_number, ref_mean = !!sym(mean_col))
 
@@ -1334,7 +1335,7 @@ if (length(existing_vars) == 0) {
       condition_label <- condition_labels[condition_idx]
 
       # Label for y-axis: which solution is the 100% reference
-      ref_label <- if (verum_value == 0) "water_1" else "potency_x"
+      ref_label <- if (verum_value == 0) "water_1" else "Lactose"
 
       plot_data <- summary_normalized %>% filter(verum == verum_value)
       color_map <- if (verum_value == 0) color_mapping_snc_pooled else color_mapping_verum_pooled
@@ -1846,7 +1847,7 @@ if (run_pair_diagnostic) {
 
     # Color mappings for SNC and Verum (same order as base_solution sol1/sol2/sol3)
     snc_solutions <- c("water_1", "water_2", "water_3")
-    verum_solutions <- c("potency_x", "potency_y", "potency_z")
+    verum_solutions <- c("Lactose", "Stannum", "Silicea")
     color_map_snc_scatter <- setNames(pair_scatter_colors, snc_solutions)
     color_map_verum_scatter <- setNames(pair_scatter_colors, verum_solutions)
 
