@@ -30,10 +30,16 @@ input_file_fractal <- "20251218_ASM_1_10_fractal_data_DECODED.csv"
 
 # USER TOGGLE 3: Outlier removal - TRUE or FALSE
 remove_outliers <- TRUE
-outliers_file_name <- "20260325_ASM_exp3ANDoutliers.csv"
+outliers_file_name <- "20260115_ASM_exp3.csv"
 
 # USER TOGGLE 4: Create correlation matrix plots - TRUE or FALSE
 create_correlation_plots <- FALSE
+
+# USER TOGGLE 5: Pair-pooling diagnostic - TRUE or FALSE
+# Runs a nested ANOVA (decoded_solution / pair) to test whether the two
+# independently prepared pairs within each solution differ systematically.
+# If non-significant, pooling pairs in the main ANOVA is justified.
+run_pair_diagnostic <- TRUE
 
 #===== DERIVED CONFIGURATION (based on toggles above) ========================
 
@@ -65,7 +71,7 @@ if (analysis_type == "texture") {
 
   # Four focal parameters for detailed post-hoc and plotting
 
-  analysis_vars <- c(    "cluster_shade", "entropy", "maximum_probability", "diagonal_moment", "evaporation_duration")
+  analysis_vars <- c("cluster_shade", "entropy", "maximum_probability", "diagonal_moment", "evaporation_duration")
 
   # All 15 texture parameters for comprehensive Excel ANOVA summary
   all_params <- c(
@@ -583,11 +589,13 @@ compute_emmeans_contrasts <- function(data_subset, variable) {
   }
 
   # --- Cohen's d = mean difference / residual SD ---
+  
   # Statistical goal: quantify pairwise effect sizes on a standardized scale
   # so they are comparable across parameters with different units/ranges.
   # We use the ANOVA model's residual SD (pooled within-group SD) as the
   # denominator — this is the standard choice for balanced/near-balanced
   # designs and gives the same denominator for all pairs within a model.
+  
   residual_sd <- sigma(model)
 
   for (i in 1:nrow(pairs_summary)) {
@@ -610,6 +618,7 @@ compute_emmeans_contrasts <- function(data_subset, variable) {
   }
 
   # --- Interaction contrasts (only if multiple experiments) ---
+  
   # Statistical goal: test whether each pairwise solution difference is
   # consistent across experiments, or whether the treatment effect depends
   # on which experiment we look at (a per-pair solution x experiment
@@ -631,6 +640,7 @@ compute_emmeans_contrasts <- function(data_subset, variable) {
   #      are collectively zero.
   # The p-values fill the lower triangle of interaction_matrix
   # (same indexing convention as potency_matrix).
+  
   if (n_experiments > 1) {
     tryCatch({
       emm_by_exp <- emmeans(model, ~ decoded_solution | experiment_number)
@@ -783,6 +793,7 @@ for (scenario in scenarios_posthoc) {
     # matrix. Each cell holds one pairwise contrast; upper triangle is left
     # empty to avoid redundancy. Each solution gets two columns: "solution"
     # (main-effect p) and "interaction" (per-pair experiment interaction p).
+    
     for (i in 1:n_solutions) {
       writeData(wb_posthoc, scenario$short_name, solutions[i],
                 startRow = current_row, startCol = 1)
@@ -1158,6 +1169,232 @@ if (length(existing_vars) == 0) {
   )
 
   cat(sprintf("Plot saved as: %s\n", output_filename_plot))
+
+
+  #----- PLOT 2: Pairs-pooled (3 lines per panel) ------------------------------
+
+  cat("\n--- Creating pairs-pooled plot (3 solutions, pairs averaged) ---\n")
+
+  # Pool pairs: mean and SE across all ~14 replicates per solution per sub-experiment
+  summary_pooled <- df2 %>%
+    group_by(verum, sub_exp_number, decoded_solution, base_solution) %>%
+    summarise(
+      across(all_of(existing_vars),
+             list(mean = ~mean(.x, na.rm = TRUE),
+                  se = ~std.error(.x, na.rm = TRUE)),
+             .names = "{.col}_{.fn}"),
+      n = n(),
+      .groups = "drop"
+    )
+
+  # Color mapping for 3-line plots: one color per decoded solution
+  color_mapping_snc_pooled <- c(
+    "water_1" = base_colors[1],
+    "water_2" = base_colors[2],
+    "water_3" = base_colors[3]
+  )
+  color_mapping_verum_pooled <- c(
+    "potency_x" = base_colors[1],
+    "potency_y" = base_colors[2],
+    "potency_z" = base_colors[3]
+  )
+
+  # Y-axis limits for pooled plot (same approach as original)
+  y_limits_pooled <- list()
+  for (var in existing_vars) {
+    mean_col <- paste0(var, "_mean")
+    se_col <- paste0(var, "_se")
+    y_min <- min(summary_pooled[[mean_col]] - summary_pooled[[se_col]], na.rm = TRUE)
+    y_max <- max(summary_pooled[[mean_col]] + summary_pooled[[se_col]], na.rm = TRUE)
+    y_range <- y_max - y_min
+    y_limits_pooled[[var]] <- c(y_min - 0.05 * y_range, y_max + 0.05 * y_range)
+  }
+
+  # Build pooled plot panels
+  plot_list_pooled <- list()
+  plot_counter_pooled <- 1
+
+  for (var in existing_vars) {
+    mean_col <- paste0(var, "_mean")
+    se_col <- paste0(var, "_se")
+
+    for (condition_idx in seq_along(conditions)) {
+      verum_value <- conditions[condition_idx]
+      condition_label <- condition_labels[condition_idx]
+
+      plot_data <- summary_pooled %>% filter(verum == verum_value)
+      color_map <- if (verum_value == 0) color_mapping_snc_pooled else color_mapping_verum_pooled
+      dodge_width <- 0.3
+
+      p <- ggplot(plot_data, aes(x = as.numeric(as.character(sub_exp_number)),
+                                 y = .data[[mean_col]],
+                                 color = decoded_solution,
+                                 group = decoded_solution)) +
+        geom_line(linewidth = 0.7, position = position_dodge(width = dodge_width)) +
+        geom_errorbar(aes(ymin = .data[[mean_col]] - .data[[se_col]],
+                          ymax = .data[[mean_col]] + .data[[se_col]]),
+                      width = 0.2, linewidth = 0.5,
+                      position = position_dodge(width = dodge_width)) +
+        geom_point(size = 2.5, position = position_dodge(width = dodge_width)) +
+        scale_x_continuous(breaks = 1:5, labels = 1:5) +
+        scale_y_continuous(limits = y_limits_pooled[[var]]) +
+        scale_color_manual(values = color_map, name = "Solution") +
+        labs(
+          title = condition_label,
+          x = "Sub-experiment Number",
+          y = var,
+          caption = "Note: Sub-exp 1 = AS data; Sub-exp 2-5 = JZ data"
+        ) +
+        theme_bw() +
+        theme(
+          plot.title = element_text(size = 11, face = "bold"),
+          axis.title = element_text(size = 10),
+          axis.text = element_text(size = 9),
+          legend.title = element_text(size = 9),
+          legend.text = element_text(size = 8),
+          plot.caption = element_text(size = 8, hjust = 0)
+        )
+
+      plot_list_pooled[[plot_counter_pooled]] <- p
+      plot_counter_pooled <- plot_counter_pooled + 1
+    }
+  }
+
+  # Arrange and save pooled plot
+  grid_plot_pooled <- grid.arrange(
+    grobs = plot_list_pooled,
+    nrow = actual_nrow,
+    ncol = 2,
+    top = paste0("ASM ", toupper(analysis_type), " Parameters (pairs pooled)\n", data_source_note)
+  )
+
+  output_filename_pooled <- file.path(output_folder, paste0(input_prefix, output_prefix, "parameters_grid_pooled", outlier_file_suffix, ".png"))
+  ggsave(
+    filename = output_filename_pooled,
+    plot = grid_plot_pooled,
+    width = 30,
+    height = actual_height,
+    dpi = 300,
+    units = "cm",
+    limitsize = FALSE
+  )
+  cat(sprintf("Pooled plot saved as: %s\n", output_filename_pooled))
+
+
+  #----- PLOT 3: Normalized to reference solution (% of reference mean) --------
+
+  cat("\n--- Creating normalized plot (% relative to reference) ---\n")
+  cat("  Reference solutions: potency_x (verum), water_1 (SNC)\n")
+
+  # Normalize each parameter to the reference solution's mean within each
+  # (verum, sub_exp_number) combination. SE is scaled by the same factor so
+  # error bars remain proportional.
+  summary_normalized <- summary_pooled
+
+  for (var in existing_vars) {
+    mean_col <- paste0(var, "_mean")
+    se_col <- paste0(var, "_se")
+
+    # Extract reference means: potency_x for verum, water_1 for SNC
+    ref_means <- summary_pooled %>%
+      filter((verum == 1 & decoded_solution == "potency_x") |
+             (verum == 0 & decoded_solution == "water_1")) %>%
+      select(verum, sub_exp_number, ref_mean = !!sym(mean_col))
+
+    summary_normalized <- summary_normalized %>%
+      left_join(ref_means, by = c("verum", "sub_exp_number")) %>%
+      mutate(
+        !!se_col   := (.data[[se_col]]   / abs(ref_mean)) * 100,
+        !!mean_col := (.data[[mean_col]] / ref_mean) * 100
+      ) %>%
+      select(-ref_mean)
+  }
+
+  # Y-axis limits for normalized plot
+  y_limits_norm <- list()
+  for (var in existing_vars) {
+    mean_col <- paste0(var, "_mean")
+    se_col <- paste0(var, "_se")
+    y_min <- min(summary_normalized[[mean_col]] - summary_normalized[[se_col]], na.rm = TRUE)
+    y_max <- max(summary_normalized[[mean_col]] + summary_normalized[[se_col]], na.rm = TRUE)
+    y_range <- y_max - y_min
+    y_limits_norm[[var]] <- c(y_min - 0.05 * y_range, y_max + 0.05 * y_range)
+  }
+
+  # Build normalized plot panels
+  plot_list_norm <- list()
+  plot_counter_norm <- 1
+
+  for (var in existing_vars) {
+    mean_col <- paste0(var, "_mean")
+    se_col <- paste0(var, "_se")
+
+    for (condition_idx in seq_along(conditions)) {
+      verum_value <- conditions[condition_idx]
+      condition_label <- condition_labels[condition_idx]
+
+      # Label for y-axis: which solution is the 100% reference
+      ref_label <- if (verum_value == 0) "water_1" else "potency_x"
+
+      plot_data <- summary_normalized %>% filter(verum == verum_value)
+      color_map <- if (verum_value == 0) color_mapping_snc_pooled else color_mapping_verum_pooled
+      dodge_width <- 0.3
+
+      p <- ggplot(plot_data, aes(x = as.numeric(as.character(sub_exp_number)),
+                                 y = .data[[mean_col]],
+                                 color = decoded_solution,
+                                 group = decoded_solution)) +
+        geom_hline(yintercept = 100, linetype = "dashed", color = "grey50", linewidth = 0.4) +
+        geom_line(linewidth = 0.7, position = position_dodge(width = dodge_width)) +
+        geom_errorbar(aes(ymin = .data[[mean_col]] - .data[[se_col]],
+                          ymax = .data[[mean_col]] + .data[[se_col]]),
+                      width = 0.2, linewidth = 0.5,
+                      position = position_dodge(width = dodge_width)) +
+        geom_point(size = 2.5, position = position_dodge(width = dodge_width)) +
+        scale_x_continuous(breaks = 1:5, labels = 1:5) +
+        scale_y_continuous(limits = y_limits_norm[[var]]) +
+        scale_color_manual(values = color_map, name = "Solution") +
+        labs(
+          title = condition_label,
+          x = "Sub-experiment Number",
+          y = paste0(var, "\n(% of ", ref_label, ")"),
+          caption = "Note: Sub-exp 1 = AS data; Sub-exp 2-5 = JZ data"
+        ) +
+        theme_bw() +
+        theme(
+          plot.title = element_text(size = 11, face = "bold"),
+          axis.title = element_text(size = 10),
+          axis.text = element_text(size = 9),
+          legend.title = element_text(size = 9),
+          legend.text = element_text(size = 8),
+          plot.caption = element_text(size = 8, hjust = 0)
+        )
+
+      plot_list_norm[[plot_counter_norm]] <- p
+      plot_counter_norm <- plot_counter_norm + 1
+    }
+  }
+
+  # Arrange and save normalized plot
+  grid_plot_norm <- grid.arrange(
+    grobs = plot_list_norm,
+    nrow = actual_nrow,
+    ncol = 2,
+    top = paste0("ASM ", toupper(analysis_type), " Parameters (normalized to reference)\n", data_source_note)
+  )
+
+  output_filename_norm <- file.path(output_folder, paste0(input_prefix, output_prefix, "parameters_grid_normalized", outlier_file_suffix, ".png"))
+  ggsave(
+    filename = output_filename_norm,
+    plot = grid_plot_norm,
+    width = 30,
+    height = actual_height,
+    dpi = 300,
+    units = "cm",
+    limitsize = FALSE
+  )
+  cat(sprintf("Normalized plot saved as: %s\n", output_filename_norm))
+
 }
 
 
@@ -1337,6 +1574,380 @@ if (create_correlation_plots) {
 }
 
 
+#===== PAIR-POOLING DIAGNOSTIC ================================================
+
+# Tests whether the two independently prepared pairs within each solution
+# differ systematically. Uses a nested fixed-effect ANOVA:
+#   param ~ decoded_solution / pair + experiment_number + decoded_solution:experiment_number
+# The nested term (decoded_solution:pair) captures pair-level shifts within
+# each solution. Per-solution contrasts (pair 1 vs pair 2 within each solution)
+# are obtained via emmeans.
+#
+# Non-significant results justify pooling pairs in the main ANOVA.
+# Significant results suggest escalating to a mixed model (lmer with random
+# pair intercept) for formal reporting.
+# Added 2026-04-09.
+
+if (run_pair_diagnostic) {
+
+  cat("\n")
+  cat("========================================================================\n")
+  cat("PAIR-POOLING DIAGNOSTIC\n")
+  cat("========================================================================\n\n")
+
+  # --- Helper function: nested ANOVA with per-solution pair contrasts ---
+  # Returns a named list with omnibus p-value for the nested pair term,
+  # plus individual p-values for pair 1 vs pair 2 within each solution.
+  run_pair_diagnostic_anova <- function(data_subset, param_name) {
+
+    if (!(param_name %in% colnames(data_subset))) {
+      return(list(omnibus_p = NA, per_solution = setNames(rep(NA, 3), rep("NA", 3))))
+    }
+
+    n_experiments <- length(unique(data_subset$experiment_number))
+    solutions <- levels(droplevels(data_subset$decoded_solution))
+
+    # Initialize per-solution results
+    per_solution <- setNames(rep(NA_real_, length(solutions)), solutions)
+
+    tryCatch({
+      # Build nested model: decoded_solution / pair expands to
+      # decoded_solution + decoded_solution:pair
+      if (n_experiments > 1) {
+        formula_str <- paste(param_name,
+          "~ decoded_solution / pair + experiment_number + decoded_solution:experiment_number")
+      } else {
+        formula_str <- paste(param_name, "~ decoded_solution / pair")
+      }
+
+      model <- aov(as.formula(formula_str), data = data_subset)
+      anova_results <- Anova(model, type = "III")
+
+      # Omnibus test for the nested pair term
+      omnibus_p <- anova_results["decoded_solution:pair", "Pr(>F)"]
+
+      # Per-solution pair contrasts via emmeans:
+      # Compare pair 1 vs pair 2 separately within each decoded_solution level
+      emm_pairs <- emmeans(model, pairwise ~ pair | decoded_solution)
+      contrasts_summary <- summary(emm_pairs$contrasts)
+
+      for (sol in solutions) {
+        row <- contrasts_summary[contrasts_summary$decoded_solution == sol, ]
+        if (nrow(row) == 1) {
+          per_solution[sol] <- row$p.value
+        }
+      }
+
+      return(list(omnibus_p = omnibus_p, per_solution = per_solution))
+
+    }, error = function(e) {
+      cat(sprintf("    WARNING: Model failed for %s — %s\n", param_name, e$message))
+      return(list(omnibus_p = NA, per_solution = per_solution))
+    })
+  }
+
+  # --- Scenario definitions (same 6 as main ANOVA, with droplevels) ---
+  scenarios_pair <- list(
+    list(name = "ALL DATA - SNC", short_name = "ALL_SNC",
+         data = droplevels(df2[df2$verum == 0, ])),
+    list(name = "ALL DATA - Verum", short_name = "ALL_Verum",
+         data = droplevels(df2[df2$verum == 1, ])),
+    list(name = "JZ ONLY - SNC", short_name = "JZ_SNC",
+         data = droplevels(df2[df2$experiment_name == "ASM_JZ" & df2$verum == 0, ])),
+    list(name = "JZ ONLY - Verum", short_name = "JZ_Verum",
+         data = droplevels(df2[df2$experiment_name == "ASM_JZ" & df2$verum == 1, ])),
+    list(name = "AS ONLY - SNC", short_name = "AS_SNC",
+         data = droplevels(df2[df2$experiment_name == "ASM_AS" & df2$verum == 0, ])),
+    list(name = "AS ONLY - Verum", short_name = "AS_Verum",
+         data = droplevels(df2[df2$experiment_name == "ASM_AS" & df2$verum == 1, ]))
+  )
+
+  # --- Workbook setup (reuse existing color styles) ---
+  wb_pair <- createWorkbook()
+
+  # Collect per-scenario verdicts for the final console summary
+  pair_verdicts <- list()
+
+  for (scenario in scenarios_pair) {
+
+    cat(sprintf("Processing pair diagnostic: %s\n", scenario$name))
+    addWorksheet(wb_pair, scenario$short_name)
+
+    # Identify solution names in this scenario's data
+    solutions_in_data <- levels(scenario$data$decoded_solution)
+
+    # Column names: Parameter + omnibus + one column per solution
+    pair_col_names <- c("Parameter", "pair(omnibus)",
+                        paste0("pair(", solutions_in_data, ")"))
+
+    results_list <- list()
+
+    for (param in all_params) {
+      if (!(param %in% colnames(scenario$data))) next
+
+      cat(sprintf("  Parameter: %s\n", param))
+      result <- run_pair_diagnostic_anova(scenario$data, param)
+
+      # Build one-row data.frame for this parameter
+      row_vals <- c(result$omnibus_p)
+      for (sol in solutions_in_data) {
+        row_vals <- c(row_vals, result$per_solution[sol])
+      }
+      row_df <- data.frame(
+        Parameter = param,
+        t(row_vals),
+        stringsAsFactors = FALSE
+      )
+      colnames(row_df) <- pair_col_names
+      results_list[[param]] <- row_df
+    }
+
+    results_df <- do.call(rbind, results_list)
+    rownames(results_df) <- NULL
+
+    # Format numeric p-values as strings for Excel display
+    for (col in pair_col_names[-1]) {
+      for (row in 1:nrow(results_df)) {
+        cell_value <- results_df[row, col]
+        if (!is.na(suppressWarnings(as.numeric(cell_value)))) {
+          results_df[row, col] <- sprintf("%.6f", as.numeric(cell_value))
+        }
+      }
+    }
+
+    # --- Write to Excel sheet ---
+    writeData(wb_pair, scenario$short_name,
+              paste0("Pair-Pooling Diagnostic: ", scenario$name,
+                     " (", toupper(analysis_type), " analysis)"),
+              startRow = 1, startCol = 1)
+    writeData(wb_pair, scenario$short_name, data_source_note,
+              startRow = 2, startCol = 1)
+
+    writeData(wb_pair, scenario$short_name, results_df,
+              startRow = 4, rowNames = FALSE)
+
+    # Header style
+    addStyle(wb_pair, scenario$short_name, style_header,
+             rows = 4, cols = 1:ncol(results_df), gridExpand = TRUE)
+
+    # Color-code p-values (columns 2 onwards)
+    for (row_idx in 1:nrow(results_df)) {
+      for (col_idx in 2:ncol(results_df)) {
+        cell_value <- results_df[row_idx, colnames(results_df)[col_idx]]
+
+        if (is.na(cell_value) || grepl("Error|NA", cell_value)) next
+
+        p_val <- suppressWarnings(as.numeric(cell_value))
+        if (!is.na(p_val)) {
+          excel_row <- row_idx + 4  # +4 because data starts at row 5
+          if (p_val < 0.01) {
+            addStyle(wb_pair, scenario$short_name, style_red,
+                     rows = excel_row, cols = col_idx)
+          } else if (p_val < 0.05) {
+            addStyle(wb_pair, scenario$short_name, style_orange,
+                     rows = excel_row, cols = col_idx)
+          } else if (p_val < 0.10) {
+            addStyle(wb_pair, scenario$short_name, style_lilac,
+                     rows = excel_row, cols = col_idx)
+          }
+        }
+      }
+    }
+
+    # Column widths
+    col_widths <- c(25, rep(18, ncol(results_df) - 1))
+    setColWidths(wb_pair, scenario$short_name,
+                 cols = 1:ncol(results_df), widths = col_widths)
+
+    # Legend
+    legend_row <- nrow(results_df) + 6
+    writeData(wb_pair, scenario$short_name, "Color Legend:",
+              startRow = legend_row, startCol = 1)
+    writeData(wb_pair, scenario$short_name, "Light lilac = p < 0.10",
+              startRow = legend_row + 1, startCol = 1)
+    writeData(wb_pair, scenario$short_name, "Light orange = p < 0.05",
+              startRow = legend_row + 2, startCol = 1)
+    writeData(wb_pair, scenario$short_name, "Light red = p < 0.01",
+              startRow = legend_row + 3, startCol = 1)
+    writeData(wb_pair, scenario$short_name,
+              "Omnibus = nested pair term from Type III ANOVA; per-solution = emmeans pair contrasts",
+              startRow = legend_row + 4, startCol = 1)
+
+    # --- Console summary for this scenario ---
+    # Count parameters with omnibus pair effect at p < 0.05
+    omnibus_col <- "pair(omnibus)"
+    omnibus_pvals <- suppressWarnings(as.numeric(results_df[[omnibus_col]]))
+    sig_params <- results_df$Parameter[!is.na(omnibus_pvals) & omnibus_pvals < 0.05]
+    n_sig <- length(sig_params)
+    n_total <- sum(!is.na(omnibus_pvals))
+
+    if (n_sig == 0) {
+      verdict <- "Pooling appears justified (no pair effects at p < 0.05)"
+    } else {
+      verdict <- sprintf("Pair effects detected at p < 0.05 in %d/%d parameters — consider mixed model",
+                         n_sig, n_total)
+    }
+
+    cat(sprintf("  >> %s: %s\n", scenario$short_name, verdict))
+    if (n_sig > 0) {
+      cat(sprintf("     Affected: %s\n", paste(sig_params, collapse = ", ")))
+    }
+    pair_verdicts[[scenario$short_name]] <- verdict
+  }
+
+  # --- Save workbook ---
+  output_filename_pair <- file.path(output_folder,
+    paste0(input_prefix, output_prefix, "pair_diagnostic", outlier_file_suffix, ".xlsx"))
+  saveWorkbook(wb_pair, output_filename_pair, overwrite = TRUE)
+
+  cat("\n")
+  cat("========================================================================\n")
+  cat(sprintf("Pair diagnostic exported to: %s\n", output_filename_pair))
+  cat("========================================================================\n\n")
+
+  # --- Pair agreement scatter plots ---
+  # For each parameter, plot mean(pair 1) vs mean(pair 2) per solution × experiment.
+  # Points near the identity line indicate that the two independently prepared
+  # pairs agree well, visually supporting the pooling assumption.
+
+  cat("--- Creating pair agreement scatter plots ---\n")
+
+  # Colors: Dark2 positions 4-6 (pink, green, yellow) — one per solution
+  dark2_pal <- RColorBrewer::brewer.pal(8, "Dark2")
+  pair_scatter_colors <- dark2_pal[4:6]
+
+  # Filter to parameters that exist in the data
+  scatter_vars <- analysis_vars[analysis_vars %in% colnames(df2)]
+
+  if (length(scatter_vars) > 0) {
+
+    # Compute pair-level means: one value per (verum, experiment_number,
+    # decoded_solution, pair) — averaging over the ~7 replicates within each pair
+    pair_means <- df2 %>%
+      group_by(verum, experiment_number, decoded_solution, pair) %>%
+      summarise(
+        across(all_of(scatter_vars), ~mean(.x, na.rm = TRUE)),
+        .groups = "drop"
+      )
+
+    # Pivot to wide: separate columns for pair 1 and pair 2 means
+    pair1_data <- pair_means %>%
+      filter(pair == 1) %>%
+      rename_with(~paste0(.x, "_p1"), all_of(scatter_vars)) %>%
+      select(-pair)
+
+    pair2_data <- pair_means %>%
+      filter(pair == 2) %>%
+      rename_with(~paste0(.x, "_p2"), all_of(scatter_vars)) %>%
+      select(-pair)
+
+    scatter_data <- inner_join(pair1_data, pair2_data,
+                               by = c("verum", "experiment_number", "decoded_solution"))
+
+    # Color mappings for SNC and Verum (same order as base_solution sol1/sol2/sol3)
+    snc_solutions <- c("water_1", "water_2", "water_3")
+    verum_solutions <- c("potency_x", "potency_y", "potency_z")
+    color_map_snc_scatter <- setNames(pair_scatter_colors, snc_solutions)
+    color_map_verum_scatter <- setNames(pair_scatter_colors, verum_solutions)
+
+    # Experiment shapes: use distinct shapes for up to 5 sub-experiments
+    all_exp_numbers <- sort(unique(as.numeric(as.character(scatter_data$experiment_number))))
+    exp_shapes <- c(16, 17, 15, 18, 8, 3, 4, 7, 9, 10)  # circle, triangle, square, diamond, ...
+    shape_map <- setNames(exp_shapes[seq_along(all_exp_numbers)],
+                          as.character(all_exp_numbers))
+
+    # Conditions: SNC (verum == 0) and Verum (verum == 1)
+    scatter_conditions <- c(0, 1)
+    scatter_condition_labels <- c("SNC (Water Controls)", "Verum (Treatment)")
+
+    scatter_plot_list <- list()
+    scatter_counter <- 1
+
+    for (var in scatter_vars) {
+      p1_col <- paste0(var, "_p1")
+      p2_col <- paste0(var, "_p2")
+
+      for (cond_idx in seq_along(scatter_conditions)) {
+        verum_val <- scatter_conditions[cond_idx]
+        cond_label <- scatter_condition_labels[cond_idx]
+
+        plot_df <- scatter_data %>% filter(verum == verum_val)
+        color_map <- if (verum_val == 0) color_map_snc_scatter else color_map_verum_scatter
+
+        # Shared axis range so the identity line is a true diagonal
+        all_vals <- c(plot_df[[p1_col]], plot_df[[p2_col]])
+        axis_range <- range(all_vals, na.rm = TRUE)
+        axis_pad <- diff(axis_range) * 0.05
+        axis_lims <- c(axis_range[1] - axis_pad, axis_range[2] + axis_pad)
+
+        p <- ggplot(plot_df, aes(x = .data[[p1_col]],
+                                 y = .data[[p2_col]],
+                                 color = decoded_solution,
+                                 shape = experiment_number)) +
+          # Identity line: points on this line mean pair 1 == pair 2
+          geom_abline(intercept = 0, slope = 1,
+                      linetype = "dashed", color = "grey50", linewidth = 0.4) +
+          geom_point(size = 3, alpha = 0.85) +
+          scale_color_manual(values = color_map, name = "Solution") +
+          scale_shape_manual(values = shape_map, name = "Experiment") +
+          coord_fixed(xlim = axis_lims, ylim = axis_lims) +
+          labs(
+            title = cond_label,
+            x = paste0(var, " (pair 1 mean)"),
+            y = paste0(var, " (pair 2 mean)")
+          ) +
+          theme_bw() +
+          theme(
+            plot.title = element_text(size = 11, face = "bold"),
+            axis.title = element_text(size = 9),
+            axis.text = element_text(size = 8),
+            legend.title = element_text(size = 9),
+            legend.text = element_text(size = 8)
+          )
+
+        scatter_plot_list[[scatter_counter]] <- p
+        scatter_counter <- scatter_counter + 1
+      }
+    }
+
+    # Arrange in grid: one row per parameter, two columns (SNC | Verum)
+    scatter_nrow <- length(scatter_vars)
+    scatter_height <- 8 * scatter_nrow  # cm per row
+    if (scatter_height < 20) scatter_height <- 20
+
+    grid_scatter <- grid.arrange(
+      grobs = scatter_plot_list,
+      nrow = scatter_nrow,
+      ncol = 2,
+      top = paste0("ASM ", toupper(analysis_type),
+                    " — Pair Agreement (pair 1 mean vs pair 2 mean)\n",
+                    data_source_note)
+    )
+
+    output_filename_pair_scatter <- file.path(output_folder,
+      paste0(input_prefix, output_prefix, "pair_scatter", outlier_file_suffix, ".png"))
+
+    ggsave(
+      filename = output_filename_pair_scatter,
+      plot = grid_scatter,
+      width = 30,
+      height = scatter_height,
+      dpi = 300,
+      units = "cm",
+      limitsize = FALSE
+    )
+
+    cat(sprintf("Pair scatter plot saved as: %s\n", output_filename_pair_scatter))
+
+  } else {
+    cat("WARNING: No analysis_vars found in data. Skipping pair scatter plots.\n")
+  }
+
+} else {
+  cat("\nPair-pooling diagnostic: SKIPPED (run_pair_diagnostic = FALSE)\n\n")
+}
+
+
 #===== FINAL SUMMARY ==========================================================
 
 cat("\n")
@@ -1353,5 +1964,11 @@ if (exists("output_filename_plot")) {
 }
 if (create_correlation_plots) {
   cat(sprintf("  4. Correlation matrices: %s/\n", corr_folder))
+}
+if (run_pair_diagnostic) {
+  cat(sprintf("  5. Pair-pooling diagnostic: %s\n", output_filename_pair))
+  if (exists("output_filename_pair_scatter")) {
+    cat(sprintf("  6. Pair scatter plots: %s\n", output_filename_pair_scatter))
+  }
 }
 cat("\nDone!\n")
