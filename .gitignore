@@ -9,3 +9,7 @@
 *_stats/
 OLD/
 *_DECODED.csv
+
+# Local artifacts not part of the analysis pipeline
+*.zip
+Results from before potency name decoding/
